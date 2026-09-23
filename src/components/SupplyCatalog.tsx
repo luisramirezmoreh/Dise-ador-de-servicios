@@ -6,6 +6,46 @@ import CsvImport, { type ImportRow } from './CsvImport';
 
 const BASE_CATEGORIAS = ['Ataúd', 'Urna', 'Cafetería', 'Flores', 'Papelería', 'Limpieza', 'Mobiliario', 'Equipo de velación', 'Preparación', 'Trámites', 'Proveedor externo', 'Otro'];
 
+// Category → 3-letter prefix for auto-generated IDs
+const CATEGORY_PREFIX: Record<string, string> = {
+  'Ataúd':              'ATD',
+  'Urna':               'URN',
+  'Cafetería':          'CAF',
+  'Bebidas calientes':  'BEB',
+  'Flores':             'FLR',
+  'Arreglos':           'ARR',
+  'Papelería':          'PAP',
+  'Recordatorios':      'REC',
+  'Limpieza':           'LIM',
+  'Higiene':            'HGN',
+  'Mobiliario':         'MOB',
+  'Sillas':             'SLL',
+  'Equipo de velación': 'EQV',
+  'Preparación':        'PRE',
+  'Trámites':           'TRM',
+  'Registro Civil':     'RCV',
+  'Proveedor externo':  'PRV',
+  'Crematorio':         'CRM',
+  'Cerámica':           'CER',
+  'Madera fina':        'MDF',
+  'Madera sólida':      'MDS',
+  'Soporte':            'SPT',
+  'Otro':               'OTR',
+};
+
+function getPrefixFor(categoria: string): string {
+  return CATEGORY_PREFIX[categoria] ?? categoria.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3).padEnd(3, 'X');
+}
+
+function generateId(categoria: string, existingIds: string[]): string {
+  const prefix = getPrefixFor(categoria);
+  const nums = existingIds
+    .map(id => { const m = id.match(new RegExp(`^${prefix}-(\\d+)$`)); return m ? parseInt(m[1], 10) : 0; })
+    .filter(n => n > 0);
+  const next = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+  return `${prefix}-${String(next).padStart(3, '0')}`;
+}
+
 interface Props {
   imageMap: Record<string, string>;
   onSetImage: (id: string, dataUrl: string) => void;
@@ -81,6 +121,7 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
   const [catFilter, setCatFilter] = useState('Todas');
   const [editId, setEditId] = useState<string | null>(null);
   const [editRow, setEditRow] = useState<Partial<Insumo>>({});
+  const [idError, setIdError] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [importBanner, setImportBanner] = useState<{ count: number; incomplete: number } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
@@ -94,11 +135,28 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
     return matchSearch && matchCat;
   });
 
-  function startEdit(row: Insumo) { setEditId(row.id); setEditRow({ ...row }); }
+  function startEdit(row: Insumo) { setEditId(row.id); setEditRow({ ...row }); setIdError(null); }
 
   function saveEdit() {
-    setData(prev => prev.map(i => i.id === editId ? { ...i, ...editRow } as Insumo : i));
+    const oldId = editId!;
+    const newId = (editRow.id ?? oldId).trim();
+
+    // Validate uniqueness
+    if (newId !== oldId && data.some(i => i.id === newId)) {
+      setIdError(`El ID "${newId}" ya existe`);
+      return;
+    }
+    if (!newId) { setIdError('El ID no puede estar vacío'); return; }
+
+    // Migrate image if the ID changed
+    if (oldId !== newId && imageMap[oldId]) {
+      onSetImage(newId, imageMap[oldId]);
+      onRemoveImage(oldId);
+    }
+
+    setData(prev => prev.map(i => i.id === oldId ? { ...i, ...editRow, id: newId } as Insumo : i));
     setEditId(null);
+    setIdError(null);
   }
 
   function toggleStatus(id: string) {
@@ -106,7 +164,8 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
   }
 
   function duplicar(row: Insumo) {
-    const nuevo: Insumo = { ...row, id: `INS-${Date.now()}`, nombre: `${row.nombre} (copia)`, estatus: 'Inactivo' };
+    const newId = generateId(row.categoria, data.map(i => i.id));
+    const nuevo: Insumo = { ...row, id: newId, nombre: `${row.nombre} (copia)`, estatus: 'Inactivo' };
     setData(prev => [...prev, nuevo]);
   }
 
@@ -117,8 +176,10 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
   }
 
   function addNew() {
+    const categoria = 'Otro';
+    const newId = generateId(categoria, data.map(i => i.id));
     const nuevo: Insumo = {
-      id: `INS-${Date.now()}`, nombre: 'Nuevo insumo', categoria: 'Otro', subcategoria: '', proveedor: '',
+      id: newId, nombre: 'Nuevo insumo', categoria, subcategoria: '', proveedor: '',
       unidadCompra: 'Pieza', contenidoPorUnidad: 1, precioSinIva: 0, iva: 16, precioConIva: 0,
       costoUnitario: 0, rendimientoPorServicio: 1, merma: 0, zonaAplicable: 'Todas',
       modalidadAplicable: 'Todas', obligatorio: false, vigenciaPrecio: '', estatus: 'Inactivo', notas: '',
@@ -254,7 +315,21 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
                       />
                     </td>
 
-                    <td className="px-3 py-2 font-mono text-xs" style={{ color: 'var(--color-muted-foreground)' }}>{row.id}</td>
+                    {/* ID — editable in edit mode */}
+                    <td className="px-3 py-2 font-mono text-xs" style={{ color: 'var(--color-muted-foreground)', minWidth: 110 }}>
+                      {editing ? (
+                        <div>
+                          <input
+                            className="w-full px-2 py-1 border rounded text-xs font-mono"
+                            style={{ borderColor: idError ? '#EF4444' : 'var(--color-border)', background: 'white' }}
+                            value={editRow.id ?? ''}
+                            onChange={e => { setEditRow(p => ({ ...p, id: e.target.value.toUpperCase() })); setIdError(null); }}
+                            placeholder="Ej: ATD-001"
+                          />
+                          {idError && <p className="text-xs mt-0.5" style={{ color: '#EF4444' }}>{idError}</p>}
+                        </div>
+                      ) : row.id}
+                    </td>
 
                     <td className="px-3 py-2 font-medium min-w-[180px]" style={{ color: 'var(--color-foreground)' }}>
                       {editing
@@ -264,7 +339,20 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
 
                     <td className="px-3 py-2">
                       {editing
-                        ? <select className="px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }} value={editRow.categoria ?? ''} onChange={e => setEditRow(p => ({ ...p, categoria: e.target.value }))}>
+                        ? <select
+                            className="px-2 py-1 border rounded text-sm"
+                            style={{ borderColor: 'var(--color-border)' }}
+                            value={editRow.categoria ?? ''}
+                            onChange={e => {
+                              const cat = e.target.value;
+                              // Auto-suggest a new ID when category changes, unless user already customized it
+                              const currentPrefix = getPrefixFor(editRow.categoria ?? '');
+                              const currentId = editRow.id ?? '';
+                              const wasAutoId = currentId.startsWith(currentPrefix + '-');
+                              const newId = wasAutoId ? generateId(cat, data.map(i => i.id).filter(id => id !== editId)) : currentId;
+                              setEditRow(p => ({ ...p, categoria: cat, id: newId }));
+                              setIdError(null);
+                            }}>
                             {CATEGORIAS.filter(c => c !== 'Todas').map(c => <option key={c}>{c}</option>)}
                           </select>
                         : <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: 'var(--color-secondary)', color: 'var(--color-secondary-foreground)' }}>{row.categoria}</span>}

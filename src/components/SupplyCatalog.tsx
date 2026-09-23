@@ -135,6 +135,17 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
     return matchSearch && matchCat;
   });
 
+  // Re-derives precioConIva and costoUnitario whenever pricing inputs change
+  function recalcPricing(patch: Partial<Insumo>, base: Partial<Insumo>): Partial<Insumo> {
+    const merged = { ...base, ...patch };
+    const sinIva = merged.precioSinIva ?? 0;
+    const iva = merged.iva ?? 16;
+    const rend = Math.max(merged.rendimientoPorServicio ?? 1, 0.0001);
+    const precioConIva = sinIva * (1 + iva / 100);
+    const costoUnitario = precioConIva / rend;
+    return { ...merged, precioConIva, costoUnitario };
+  }
+
   function startEdit(row: Insumo) { setEditId(row.id); setEditRow({ ...row }); setIdError(null); }
 
   function saveEdit() {
@@ -280,7 +291,7 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
           <table className="w-full text-sm min-w-[1200px]">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                {['', 'Imagen', 'ID', 'Nombre', 'Categoría', 'Proveedor', 'Precio s/IVA', 'IVA', 'Costo unit.', 'Rend./Srv', 'Merma%', 'Vigencia', 'Oblig.', 'Estatus', 'Acciones'].map(h => (
+                {['', 'Img', 'ID', 'Nombre', 'Categoría', 'Proveedor', 'Precio s/IVA', 'IVA%', 'Rend.', 'Merma%', 'Precio c/IVA', 'Costo/uso', 'Vigencia', 'Oblig.', 'Estatus', 'Acciones'].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide whitespace-nowrap" style={{ color: 'var(--color-muted-foreground)' }}>{h}</th>
                 ))}
               </tr>
@@ -364,25 +375,89 @@ export default function SupplyCatalog({ imageMap, onSetImage, onRemoveImage }: P
                         : row.proveedor || <span className="text-xs">Sin proveedor</span>}
                     </td>
 
+                    {/* Precio s/IVA */}
                     <td className="px-3 py-2 tabular-nums" style={{ color: row.precioSinIva === 0 ? '#EF4444' : 'var(--color-foreground)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                       {editing
-                        ? <input type="number" className="w-24 px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }} value={editRow.precioSinIva ?? 0} onChange={e => setEditRow(p => ({ ...p, precioSinIva: +e.target.value }))} />
+                        ? <input type="number" min="0" step="0.01" className="w-24 px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }}
+                            value={editRow.precioSinIva ?? 0}
+                            onChange={e => setEditRow(p => recalcPricing({ precioSinIva: +e.target.value }, p))} />
                         : formatMXN(row.precioSinIva)}
                     </td>
 
-                    <td className="px-3 py-2 tabular-nums text-xs" style={{ color: 'var(--color-muted-foreground)', fontFamily: 'var(--font-mono)' }}>{row.iva}%</td>
-                    <td className="px-3 py-2 tabular-nums text-xs font-medium" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)' }}>{formatMXN(row.costoUnitario)}</td>
-                    <td className="px-3 py-2 tabular-nums text-xs" style={{ color: 'var(--color-muted-foreground)', fontFamily: 'var(--font-mono)' }}>{row.rendimientoPorServicio}</td>
-                    <td className="px-3 py-2 tabular-nums text-xs" style={{ color: 'var(--color-muted-foreground)', fontFamily: 'var(--font-mono)' }}>{row.merma}%</td>
+                    {/* IVA% — editable */}
+                    <td className="px-3 py-2 tabular-nums text-xs" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {editing
+                        ? <div className="flex items-center gap-1">
+                            <input type="number" min="0" max="100" step="1" className="w-14 px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }}
+                              value={editRow.iva ?? 16}
+                              onChange={e => setEditRow(p => recalcPricing({ iva: +e.target.value }, p))} />
+                            <span className="text-xs" style={{ color: 'var(--color-muted-foreground)' }}>%</span>
+                          </div>
+                        : <span style={{ color: 'var(--color-muted-foreground)' }}>{row.iva}%</span>}
+                    </td>
 
+                    {/* Rendimiento — editable */}
+                    <td className="px-3 py-2 tabular-nums text-xs" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {editing
+                        ? <input type="number" min="0.001" step="1" className="w-20 px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }}
+                            value={editRow.rendimientoPorServicio ?? 1}
+                            onChange={e => setEditRow(p => recalcPricing({ rendimientoPorServicio: +e.target.value }, p))} />
+                        : <span style={{ color: 'var(--color-muted-foreground)' }}>{row.rendimientoPorServicio}</span>}
+                    </td>
+
+                    {/* Merma% — editable */}
+                    <td className="px-3 py-2 tabular-nums text-xs" style={{ fontFamily: 'var(--font-mono)' }}>
+                      {editing
+                        ? <div className="flex items-center gap-1">
+                            <input type="number" min="0" max="100" step="0.5" className="w-14 px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }}
+                              value={editRow.merma ?? 0}
+                              onChange={e => setEditRow(p => ({ ...p, merma: +e.target.value }))} />
+                            <span className="text-xs" style={{ color: 'var(--color-muted-foreground)' }}>%</span>
+                          </div>
+                        : <span style={{ color: 'var(--color-muted-foreground)' }}>{row.merma}%</span>}
+                    </td>
+
+                    {/* Precio c/IVA — derived, shown for reference */}
+                    <td className="px-3 py-2 tabular-nums text-xs" style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-secondary-foreground)' }}>
+                      {editing
+                        ? <span className="px-1" title="Calculado automáticamente">{formatMXN(editRow.precioConIva ?? 0)}</span>
+                        : formatMXN(row.precioConIva)}
+                    </td>
+
+                    {/* Costo/uso — derived = precioConIva / rendimiento */}
+                    <td className="px-3 py-2 tabular-nums text-xs font-semibold" style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-primary)' }}>
+                      {editing
+                        ? <span className="px-1" title="Calculado automáticamente">{formatMXN(editRow.costoUnitario ?? 0)}</span>
+                        : formatMXN(row.costoUnitario)}
+                    </td>
+
+                    {/* Vigencia */}
                     <td className="px-3 py-2 text-xs" style={{ color: row.vigenciaPrecio && row.vigenciaPrecio < today ? '#EF4444' : 'var(--color-secondary-foreground)', fontFamily: 'var(--font-mono)' }}>
                       {editing
-                        ? <input type="date" className="px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }} value={editRow.vigenciaPrecio ?? ''} onChange={e => setEditRow(p => ({ ...p, vigenciaPrecio: e.target.value }))} />
+                        ? <input type="date" className="px-2 py-1 border rounded text-sm" style={{ borderColor: 'var(--color-border)' }}
+                            value={editRow.vigenciaPrecio ?? ''}
+                            onChange={e => setEditRow(p => ({ ...p, vigenciaPrecio: e.target.value }))} />
                         : row.vigenciaPrecio || '—'}
                     </td>
 
-                    <td className="px-3 py-2 text-xs text-center" style={{ color: row.obligatorio ? 'var(--color-primary)' : 'var(--color-muted-foreground)' }}>
-                      {row.obligatorio ? '●' : '○'}
+                    {/* Obligatorio — toggle */}
+                    <td className="px-3 py-2 text-xs text-center">
+                      {editing
+                        ? <button
+                            onClick={() => setEditRow(p => ({ ...p, obligatorio: !p.obligatorio }))}
+                            className="w-7 h-7 rounded border-2 flex items-center justify-center mx-auto transition-colors"
+                            style={{
+                              borderColor: editRow.obligatorio ? 'var(--color-primary)' : 'var(--color-border)',
+                              background: editRow.obligatorio ? 'var(--color-primary)' : 'white',
+                              color: 'white',
+                              fontSize: 14,
+                            }}
+                            title={editRow.obligatorio ? 'Obligatorio — clic para desmarcar' : 'Opcional — clic para marcar obligatorio'}>
+                            {editRow.obligatorio ? '✓' : ''}
+                          </button>
+                        : <span style={{ color: row.obligatorio ? 'var(--color-primary)' : 'var(--color-muted-foreground)' }}>
+                            {row.obligatorio ? '●' : '○'}
+                          </span>}
                     </td>
 
                     <td className="px-3 py-2"><StatusBadge status={row.estatus} /></td>
